@@ -11,5 +11,5 @@ for line in (root / 'SHA256SUMS').read_text().splitlines():
     if not file.exists() or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
         raise SystemExit(f'Missing/modified OCR asset: {name}. Restore using sh tool/fetch_ocr.sh.')
 PY
-flutter build web --release --no-web-resources-cdn
+flutter build web --release --no-web-resources-cdn "$@"
 python3 tool/prepare_offline.py
