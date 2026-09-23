@@ -20,7 +20,7 @@ Development: `flutter run -d chrome`. Camera/OCR can run during development, but
 
 ## Flow
 
-1. **Take photo:** align one numeric display with the centered 50%-width × 50%-height rectangle.
+1. **Take photo:** align one numeric display with the centered landscape (2:1) rectangle over the full-screen camera preview.
 2. **Preview:** inspect the full image. Check the decimal reading; edit it if needed. Contrast is enhanced automatically during OCR. Retry or retake if needed.
 3. **Confirm & save:** commits photo, thumbnail, timestamp, raw OCR and confirmed reading together. Crops are used temporarily for OCR and are not saved. Failed saves retain the preview.
 4. **View gallery:** newest first; tap a tile for the original photo, confirmed meter value and timestamp.
@@ -50,7 +50,7 @@ Open http://localhost:8080/study.html (or the corresponding HTTPS URL).
 
 ## Implementation notes
 
-`lib/services` separates image processing, OCR and IndexedDB. Images use bytes and Flutter Canvas; no `dart:io`. The camera preview uses its own aspect ratio with no stretching. A fixed center rectangle is invariant under the preview-to-image scale; decoded image dimensions determine the actual crop. Front/non-rear web captures are unmirrored before OCR and persistence.
+`lib/services` separates image processing, OCR and IndexedDB. Images use bytes and Flutter Canvas; no `dart:io`. The camera preview fills the screen without stretching, cropping overflow at the edges. The centered landscape viewfinder is mapped back through that cover scaling to decoded image coordinates for OCR. Front/non-rear web captures are unmirrored before OCR and persistence.
 
 `web/ocr_bridge.js` provides the JavaScript hook required by flutter_tesseract_ocr. It pins Tesseract.js/core 4.0.2, uses a reusable worker, serializes jobs and terminates failed/timed-out workers after a 60-second ceiling. Original and enhanced crops use single-line recognition with a numeric whitelist. The normalized original crop is kept in memory for OCR retries and is not stored or displayed. Older saved records remain readable; any previously stored crop is ignored.
 

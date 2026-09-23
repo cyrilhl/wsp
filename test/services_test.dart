@@ -11,7 +11,7 @@ import 'package:wsp/services/reading.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
-    'mirrored camera pixels are normalized and center crop is half size',
+    'mirrored camera pixels are normalized within the landscape crop',
     () async {
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
@@ -29,14 +29,15 @@ void main() {
       final capture = await ImageService().prepare(
         data!.buffer.asUint8List(),
         mirrored: true,
+        viewportSize: const Size(100, 200),
       );
       final codec = await ui.instantiateImageCodec(capture.crop);
       final cropped = (await codec.getNextFrame()).image;
-      expect(cropped.width, 50);
-      expect(cropped.height, 40);
+      expect(cropped.width, 34);
+      expect(cropped.height, 17);
       final pixels = (await cropped.toByteData())!.buffer.asUint8List();
       expect(pixels.sublist(0, 4), [0, 0, 255, 255]);
-      expect(pixels.sublist(49 * 4, 50 * 4), [255, 0, 0, 255]);
+      expect(pixels.sublist(33 * 4, 34 * 4), [255, 0, 0, 255]);
       cropped.dispose();
       codec.dispose();
       image.dispose();
@@ -61,20 +62,38 @@ void main() {
       expect(parseReading(value), isNull);
     }
   });
-  test('crop maps actual preview bounds in portrait and landscape', () {
-    for (final size in [
-      const Size(400, 300),
-      const Size(300, 400),
-      const Size(600, 200),
-    ]) {
-      final bounds = const Offset(20, 80) & size;
-      final overlay = viewfinderFor(size).shift(bounds.topLeft);
-      final actual = imageCrop(overlay, bounds, size * 4);
-      expect(
-        actual,
-        Rect.fromLTWH(size.width, size.height, size.width * 2, size.height * 2),
-      );
+  test('viewfinder stays landscape and centered in either orientation', () {
+    for (final size in [const Size(390, 844), const Size(844, 390)]) {
+      final frame = viewfinderFor(size);
+      expect(frame.width / frame.height, 2);
+      expect(frame.center.dx, closeTo(size.width / 2, .001));
+      expect(frame.center.dy, closeTo(size.height / 2, .001));
+      expect((Offset.zero & size).contains(frame.topLeft), isTrue);
+      expect((Offset.zero & size).contains(frame.bottomRight), isTrue);
     }
+  });
+  test(
+    'full-screen portrait crop accounts for hidden landscape image edges',
+    () {
+      const viewport = Size(400, 800);
+      const image = Size(1600, 1200);
+      final bounds = cameraPreviewBounds(viewport, image);
+      final crop = imageCrop(viewfinderFor(viewport), bounds, image);
+      expect(crop.left, closeTo(548, .001));
+      expect(crop.top, closeTo(474, .001));
+      expect(crop.width, closeTo(504, .001));
+      expect(crop.height, closeTo(252, .001));
+    },
+  );
+  test('portrait image crop accounts for hidden top and bottom edges', () {
+    const viewport = Size(400, 600);
+    const image = Size(1200, 2400);
+    final crop = imageCrop(
+      viewfinderFor(viewport),
+      cameraPreviewBounds(viewport, image),
+      image,
+    );
+    expect(crop, const Rect.fromLTWH(96, 948, 1008, 504));
   });
   test('legacy records with stored crops remain readable', () async {
     final factory = newIdbFactoryMemory();

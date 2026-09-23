@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart' show DeviceOrientation;
 
 import 'saved_photo_screen.dart';
 import 'services/images.dart';
@@ -163,6 +165,7 @@ class _CameraScreenState extends State<CameraScreen>
   String? _error;
   bool _busy = false;
   int _generation = 0;
+  Size? _viewportSize;
   @override
   void initState() {
     super.initState();
@@ -227,6 +230,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _capture() async {
     final camera = _camera;
     if (camera == null || _busy) return;
+    final viewportSize = _viewportSize;
     setState(() => _busy = true);
     try {
       final file = await camera.takePicture();
@@ -234,7 +238,11 @@ class _CameraScreenState extends State<CameraScreen>
           camera.description.lensDirection != CameraLensDirection.back;
       final bytes = await file.readAsBytes();
       revokeCaptureUrl(file.path);
-      final capture = await ImageService().prepare(bytes, mirrored: mirrored);
+      final capture = await ImageService().prepare(
+        bytes,
+        mirrored: mirrored,
+        viewportSize: viewportSize,
+      );
       await _release();
       if (!mounted) return;
       final saved = await Navigator.push<bool>(
@@ -274,44 +282,142 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Frame the display')),
-    body: Column(
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'Keep one reading inside the rectangle. Avoid glare and hold steady.',
-          ),
-        ),
-        Expanded(
-          child: Center(
-            child: _error != null
-                ? ErrorPanel(message: _error!, retry: _initialize)
-                : _camera == null
-                ? const CircularProgressIndicator()
-                : AspectRatio(
-                    aspectRatio: _camera!.value.aspectRatio,
-                    child: Stack(
-                      fit: StackFit.expand,
+    backgroundColor: Colors.black,
+    body: LayoutBuilder(
+      builder: (context, constraints) {
+        _viewportSize = constraints.biggest;
+        final camera = _camera;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_error != null)
+              Center(
+                child: Material(
+                  borderRadius: BorderRadius.circular(16),
+                  child: ErrorPanel(message: _error!, retry: _initialize),
+                ),
+              )
+            else if (camera == null)
+              const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              )
+            else ...[
+              ValueListenableBuilder<CameraValue>(
+                valueListenable: camera,
+                builder: (context, value, _) {
+                  final orientation =
+                      value.previewPauseOrientation ??
+                      value.lockedCaptureOrientation ??
+                      value.deviceOrientation;
+                  final portrait =
+                      orientation == DeviceOrientation.portraitUp ||
+                      orientation == DeviceOrientation.portraitDown;
+                  final size = value.previewSize!;
+                  final previewSize = !kIsWeb && portrait
+                      ? Size(size.height, size.width)
+                      : size;
+                  return ClipRect(
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox.fromSize(
+                        size: previewSize,
+                        child: kIsWeb
+                            ? camera.buildPreview()
+                            : CameraPreview(camera),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const IgnorePointer(
+                child: CustomPaint(painter: ViewfinderPainter()),
+              ),
+            ],
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
                       children: [
-                        CameraPreview(_camera!),
-                        const IgnorePointer(
-                          child: CustomPaint(painter: ViewfinderPainter()),
+                        IconButton.filledTonal(
+                          tooltip: 'Back',
+                          onPressed: _busy
+                              ? null
+                              : () => Navigator.pop(context),
+                          icon: const Icon(Icons.arrow_back),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black54,
+                            foregroundColor: Colors.white,
+                          ),
                         ),
+                        const Expanded(
+                          child: Text(
+                            'Frame the display',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white, fontSize: 18),
+                          ),
+                        ),
+                        const SizedBox(width: 48),
                       ],
                     ),
                   ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(24),
-          child: FilledButton.icon(
-            onPressed: _busy || _camera == null ? null : _capture,
-            icon: const Icon(Icons.camera_alt),
-            label: Text(_busy ? 'Preparing photo…' : 'Capture photo'),
-          ),
-        ),
-      ],
+                  const Spacer(),
+                  if (_error == null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'Keep one reading inside the rectangle.\nAvoid glare and hold steady.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(blurRadius: 6, color: Colors.black),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Semantics(
+                            label: _busy ? 'Preparing photo' : 'Capture photo',
+                            button: true,
+                            child: SizedBox.square(
+                              dimension: 80,
+                              child: IconButton.filled(
+                                tooltip: 'Capture photo',
+                                onPressed: _busy || camera == null
+                                    ? null
+                                    : _capture,
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  disabledBackgroundColor: Colors.white38,
+                                  foregroundColor: Colors.black,
+                                  side: const BorderSide(
+                                    color: Colors.white,
+                                    width: 4,
+                                  ),
+                                ),
+                                icon: _busy
+                                    ? const CircularProgressIndicator(
+                                        color: Colors.black,
+                                      )
+                                    : const Icon(
+                                        Icons.camera_alt_outlined,
+                                        size: 32,
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     ),
   );
 }

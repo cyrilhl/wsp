@@ -3,14 +3,29 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/painting.dart';
 
-Rect viewfinderFor(Size preview) => Rect.fromLTWH(
-  preview.width * .25,
-  preview.height * .25,
-  preview.width * .5,
-  preview.height * .5,
-);
+/// A centered landscape frame, independent of the camera's orientation.
+Rect viewfinderFor(Size preview) {
+  final width = (preview.width * .84).clamp(0.0, preview.height * .8);
+  return Rect.fromCenter(
+    center: preview.center(Offset.zero),
+    width: width,
+    height: width / 2,
+  );
+}
 
-/// Bounds must describe the actual contained camera image, excluding letterbox.
+/// Full image bounds when the preview fills the viewport without stretching.
+Rect cameraPreviewBounds(Size viewport, Size image) {
+  final scale = viewport.width / image.width > viewport.height / image.height
+      ? viewport.width / image.width
+      : viewport.height / image.height;
+  return Rect.fromCenter(
+    center: viewport.center(Offset.zero),
+    width: image.width * scale,
+    height: image.height * scale,
+  );
+}
+
+/// Bounds describe the scaled camera image, including off-screen edges.
 Rect imageCrop(Rect overlay, Rect previewBounds, Size imageSize) {
   final clipped = overlay.intersect(previewBounds);
   return Rect.fromLTRB(
@@ -32,14 +47,23 @@ class Capture {
 }
 
 class ImageService {
-  Future<Capture> prepare(Uint8List bytes, {bool mirrored = false}) async {
+  Future<Capture> prepare(
+    Uint8List bytes, {
+    bool mirrored = false,
+    Size? viewportSize,
+  }) async {
     final codec = await ui.instantiateImageCodec(bytes);
     final image = (await codec.getNextFrame()).image;
     codec.dispose();
     try {
       final size = Size(image.width.toDouble(), image.height.toDouble());
       final bounds = Offset.zero & size;
-      final cropRect = imageCrop(viewfinderFor(size), bounds, size);
+      final viewport = viewportSize ?? size;
+      final cropRect = imageCrop(
+        viewfinderFor(viewport),
+        cameraPreviewBounds(viewport, size),
+        size,
+      );
       // camera_web mirrors non-rear captures; normalize before OCR/storage.
       final photo = mirrored ? await _render(image, bounds, size, true) : bytes;
       final crop = await _render(image, cropRect, cropRect.size, mirrored);
@@ -57,6 +81,7 @@ class ImageService {
     Size target,
     bool flip,
   ) async {
+    target = Size(target.width.roundToDouble(), target.height.roundToDouble());
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     if (flip) {
