@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fieldnote · OCR study</title>
+<style>body{font:16px system-ui;background:#f5f6f0;color:#142d29;max-width:1000px;margin:40px auto;padding:20px}button,input{font:inherit;margin:8px 8px 8px 0;padding:12px}button{background:#176759;color:white;border:0;border-radius:8px}table{border-collapse:collapse;width:100%}td,th{text-align:left;border-bottom:1px solid #ccd8d0;padding:10px}pre{white-space:pre-wrap;overflow-wrap:anywhere}canvas{max-width:100%;border:1px solid #aaa}a{color:#176759}</style></head>
+<body><a href="./">← Back to app</a><h1>OCR feasibility study</h1><p>All processing stays in this browser. Synthetic results test integration only; they do not measure real meter accuracy.</p>
+<p id="offline">Checking offline setup…</p>
+<h2>Integration smoke test</h2><canvas id="sample" width="600" height="160" aria-label="Synthetic reading 12.5"></canvas><br><button id="smoke">Run synthetic OCR</button>
+<h2>Real meter crops</h2><p>Choose at least 30 cropped meter images. Name each file <code>12.5__clear_01.png</code> (expected reading before <code>__</code>). Include clear, glare, dim, angled and decimal samples. Each crop runs in original and enhanced modes. Reload this page before each device session to measure initialization separately.</p>
+<label>Device / browser <input id="device" placeholder="Phone model, OS, browser version"></label><br>
+<label>Meter crop files <input id="files" type="file" accept="image/*" multiple></label><br>
+<button id="run">Run labeled study</button><button id="download" disabled>Download results JSON</button>
+<p id="status" role="status">Ready to test.</p><table><thead><tr><th>Sample</th><th>Mode</th><th>Raw OCR</th><th>Expected</th><th>Exact value</th><th>Time (ms)</th></tr></thead><tbody id="rows"></tbody></table><h2>Summary</h2><pre id="summary">No measurements yet.</pre>
+<script src="ocr/tesseract.min.js"></script><script src="ocr_bridge.js"></script><script src="offline.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('sample'); const ctx = canvas.getContext('2d');
+ctx.fillStyle = 'white'; ctx.fillRect(0,0,600,160); ctx.fillStyle = 'black'; ctx.font = '100px monospace'; ctx.fillText('12.5',120,115);
+setInterval(() => $('offline').textContent = meterOfflineStatus(), 1000);
+let records = [], started = false, report = null;
+const number = text => /^-?\d+(?:\.\d+)?$/.test(text.trim()) ? text.trim() : null;
+// Compare decimal values exactly without floating-point rounding.
+const canonical = text => {
+  if (!number(text)) return null;
+  const negative = text.trim().startsWith('-');
+  const [whole, fraction = ''] = text.trim().replace(/^-/, '').split('.');
+  const value = (whole.replace(/^0+(?=\d)/, '') + '.' + fraction.replace(/0+$/, '')).replace(/\.$/, '');
+  return negative && value !== '0' ? '-' + value : value;
+};
+async function measure(name, expected, data, enhanced, synthetic) {
+  const cold = !started; started = true; const start = performance.now();
+  let raw = '', error = null;
+  try { raw = await _extractText(data, {language:'eng',args:{tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789.-',preserve_interword_spaces:'1',meter_enhance:enhanced}}); }
+  catch (e) { error = String(e); }
+  const elapsedMs = Math.round(performance.now() - start);
+  const exact = !error && canonical(raw) !== null && canonical(raw) === canonical(expected);
+  const record = {name,expected,raw,enhanced,cold,synthetic,elapsedMs,exact,error}; records.push(record);
+  const row = $('rows').insertRow();
+  for (const value of [name,enhanced?'enhanced':'original',error || raw,expected,exact?'yes':'no',elapsedMs]) row.insertCell().textContent = value;
+  summarize();
+}
+function summarize() {
+  const groups = [false,true].map(enhanced => {
+    const rows = records.filter(r => !r.synthetic && r.enhanced === enhanced);
+    const times = rows.filter(r => !r.cold && !r.error).map(r=>r.elapsedMs).sort((a,b)=>a-b);
+    const percentile = p => times.length ? times[Math.ceil(times.length*p)-1] : null;
+    return {mode:enhanced?'enhanced':'original',samples:rows.length,exactAccuracy:rows.length?rows.filter(r=>r.exact).length/rows.length:null,
+      correctionRequired:rows.filter(r=>!r.exact).length,warmMedianMs:percentile(.5),warmP95Ms:percentile(.95)};
+  });
+  report = {createdAt:new Date().toISOString(),device:$('device').value,userAgent:navigator.userAgent,
+    coldStartMs:records.find(r=>r.cold)?.elapsedMs ?? null,groups,records};
+  $('summary').textContent = JSON.stringify({...report,records:undefined},null,2);
+  $('download').disabled = false;
+}
+async function run(action) {
+  $('smoke').disabled = $('run').disabled = true;
+  try { await action(); $('status').textContent = 'Finished. Results below.'; }
+  catch(e) { $('status').textContent = String(e); }
+  finally { $('smoke').disabled = $('run').disabled = false; }
+}
+$('smoke').onclick = () => run(async () => {
+  $('status').textContent = 'Recognizing synthetic 12.5…';
+  await measure('synthetic 12.5','12.5',canvas.toDataURL('image/png'),false,true);
+});
+$('run').onclick = () => run(async () => {
+  const files = [...$('files').files];
+  if (!files.length) throw Error('Choose labeled crop files first.');
+  for (const file of files) {
+    const expected = file.name.split('__')[0];
+    if (!number(expected)) throw Error('Invalid label: '+file.name+'; use 12.5__condition.png');
+  }
+  for (const file of files) {
+    $('status').textContent = 'Recognizing '+file.name;
+    const data = await new Promise((resolve,reject) => {const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
+    for (const enhanced of [false,true]) await measure(file.name,file.name.split('__')[0],data,enhanced,false);
+  }
+});
+$('download').onclick = () => {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');a.href=url;a.download='meter-study.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+</script></body></html>
