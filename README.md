@@ -21,7 +21,7 @@ Development: `flutter run -d chrome`. Camera/OCR can run during development, but
 ## Flow
 
 1. **Take photo:** align one numeric display with the centered landscape (2:1) rectangle over the full-screen camera preview.
-2. **Preview:** inspect the full image. Check the decimal reading; edit it if needed. Contrast is enhanced automatically during OCR. Retry or retake if needed.
+2. **Preview:** inspect the full image. Check the decimal reading; edit it if needed. OCR first locates the largest numeric row, then compares original and contrast-enhanced crops. Ambiguous results remain blank for manual entry. Retry or retake if needed.
 3. **Confirm & save:** commits photo, thumbnail, timestamp, raw OCR and confirmed reading together. Crops are used temporarily for OCR and are not saved. Failed saves retain the preview.
 4. **View gallery:** newest first; tap a tile for the original photo, confirmed meter value and timestamp.
 
@@ -42,7 +42,7 @@ The Dart tests use an in-memory idb_shim factory, not browser IndexedDB. Browser
 
 Open http://localhost:8080/study.html (or the corresponding HTTPS URL).
 
-- The synthetic `12.5` test verifies the real OCR worker integration, including offline loading. It is excluded from real accuracy statistics.
+- The synthetic checks cover clean `12.5`, cluttered `12.5`, and cluttered `-8.2` in original and enhanced modes, verifying the real OCR worker integration, including offline loading. It is excluded from real accuracy statistics.
 - For a real study, reload the page, enter the phone/OS/browser versions, and select at least 30 **viewfinder-cropped** meter photographs. File names encode ground truth, for example `12.5__glare_01.png` or `8__dim_03.jpg`.
 - Run the study once per page session. It processes original and grayscale/contrast variants sequentially, retains all raw results, and offers a local JSON download. Photos are not uploaded or included in the JSON.
 - Summary includes exact numeric-value accuracy before correction, corrections required, warm median/p95 and first-call initialization-plus-recognition time. `12.50` and `12.5` compare equal; distinct decimal values do not. Warm statistics exclude the initial call and errors. Synthetic tests should not precede a cold real-study run.
@@ -52,7 +52,7 @@ Open http://localhost:8080/study.html (or the corresponding HTTPS URL).
 
 `lib/services` separates image processing, OCR and IndexedDB. Images use bytes and Flutter Canvas; no `dart:io`. The camera preview fills the screen without stretching, cropping overflow at the edges. The centered landscape viewfinder is mapped back through that cover scaling to decoded image coordinates for OCR. Front/non-rear web captures are unmirrored before OCR and persistence.
 
-`web/ocr_bridge.js` provides the JavaScript hook required by flutter_tesseract_ocr. It pins Tesseract.js/core 4.0.2, uses a reusable worker, serializes jobs and terminates failed/timed-out workers after a 60-second ceiling. Original and enhanced crops use single-line recognition with a numeric whitelist. The normalized original crop is kept in memory for OCR retries and is not stored or displayed. Older saved records remain readable; any previously stored crop is ignored.
+`web/ocr_bridge.js` provides the JavaScript hook required by flutter_tesseract_ocr. It pins Tesseract.js/core 4.0.2, uses a reusable worker, serializes jobs and terminates failed/timed-out workers after a 60-second ceiling. An unrestricted sparse-text pass locates numeric words and groups nearby digits of similar height. The largest row is cropped with punctuation margins and a small border; small digits are upscaled. If a second row is at least 80% as tall, OCR returns an empty result for manual review. If no numeric region is detected, recognition falls back to the viewfinder crop. The isolated crop uses single-line recognition with a numeric whitelist, or raw-line mode when a minus was detected; a detected minus cannot silently disappear from the final reading. Enhanced mode checks both original and contrast-enhanced pixels and leaves conflicting valid readings blank. This adds OCR passes and may increase device latency. Localization still depends on Tesseract detecting the digits; glare, segmented LCD fonts, and unrecognized larger readings can cause misses or selection of background numbers. Real-device accuracy must be measured. The normalized original crop is kept in memory for OCR retries and is not stored or displayed. Older saved records remain readable; any previously stored crop is ignored.
 
 `tool/prepare_offline.py` generates `meter-sw.js` from the release files, names the cache by content hash, and marks it complete only when all assets are cached. Failed installs delete only the incomplete new cache. Successful updates wait until all old app tabs close, then activate on the next visit. Old complete caches are removed only during activation. The app verifies cached entries through its controlling worker before reporting readiness. Keep the same origin to retain photos; application-cache updates do not delete IndexedDB records.
 

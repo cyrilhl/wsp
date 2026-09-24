@@ -3,7 +3,7 @@
 <style>body{font:16px system-ui;background:#f5f6f0;color:#142d29;max-width:1000px;margin:40px auto;padding:20px}button,input{font:inherit;margin:8px 8px 8px 0;padding:12px}button{background:#176759;color:white;border:0;border-radius:8px}table{border-collapse:collapse;width:100%}td,th{text-align:left;border-bottom:1px solid #ccd8d0;padding:10px}pre{white-space:pre-wrap;overflow-wrap:anywhere}canvas{max-width:100%;border:1px solid #aaa}a{color:#176759}</style></head>
 <body><a href="./">← Back to app</a><h1>OCR feasibility study</h1><p>All processing stays in this browser. Synthetic results test integration only; they do not measure real meter accuracy.</p>
 <p id="offline">Checking offline setup…</p>
-<h2>Integration smoke test</h2><canvas id="sample" width="600" height="160" aria-label="Synthetic reading 12.5"></canvas><br><button id="smoke">Run synthetic OCR</button>
+<h2>Integration smoke test</h2><p>Checks clean and cluttered readings, including a negative decimal. These generated images do not measure real-device accuracy.</p><canvas id="sample" width="600" height="240" aria-label="Synthetic meter reading"></canvas><br><button id="smoke">Run synthetic OCR</button>
 <h2>Real meter crops</h2><p>Choose at least 30 cropped meter images. Name each file <code>12.5__clear_01.png</code> (expected reading before <code>__</code>). Include clear, glare, dim, angled and decimal samples. Each crop runs in original and enhanced modes. Reload this page before each device session to measure initialization separately.</p>
 <label>Device / browser <input id="device" placeholder="Phone model, OS, browser version"></label><br>
 <label>Meter crop files <input id="files" type="file" accept="image/*" multiple></label><br>
@@ -13,7 +13,15 @@
 <script>
 const $ = id => document.getElementById(id);
 const canvas = $('sample'); const ctx = canvas.getContext('2d');
-ctx.fillStyle = 'white'; ctx.fillRect(0,0,600,160); ctx.fillStyle = 'black'; ctx.font = '100px monospace'; ctx.fillText('12.5',120,115);
+function drawSample(reading, clutter) {
+  ctx.fillStyle = 'white'; ctx.fillRect(0,0,600,240);
+  ctx.fillStyle = 'black'; ctx.font = '90px monospace'; ctx.fillText(reading,120,150);
+  if (clutter) {
+    ctx.font = '16px sans-serif'; ctx.fillText('MOISTURE METER   MODEL 2026',30,30);
+    ctx.fillText('WOOD   HOLD   BATTERY 100%',30,215);
+  }
+}
+drawSample('12.5',true);
 setInterval(() => $('offline').textContent = meterOfflineStatus(), 1000);
 let records = [], started = false, report = null;
 const number = text => /^-?\d+(?:\.\d+)?$/.test(text.trim()) ? text.trim() : null;
@@ -57,8 +65,14 @@ async function run(action) {
   finally { $('smoke').disabled = $('run').disabled = false; }
 }
 $('smoke').onclick = () => run(async () => {
-  $('status').textContent = 'Recognizing synthetic 12.5…';
-  await measure('synthetic 12.5','12.5',canvas.toDataURL('image/png'),false,true);
+  for (const [reading,clutter] of [['12.5',false],['12.5',true],['-8.2',true]]) {
+    drawSample(reading,clutter);
+    $('status').textContent = 'Recognizing synthetic '+reading+'…';
+    const data = canvas.toDataURL('image/png');
+    for (const enhanced of [false,true]) {
+      await measure('synthetic '+reading+(clutter?' cluttered':' clean'),reading,data,enhanced,true);
+    }
+  }
 });
 $('run').onclick = () => run(async () => {
   const files = [...$('files').files];
